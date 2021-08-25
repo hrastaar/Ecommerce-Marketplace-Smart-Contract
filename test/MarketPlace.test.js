@@ -59,12 +59,12 @@ contract('Marketplace', (accounts) => {
 
   it('seller modifies listing', async() => {
     // Gather listingId + modify listing information
-    const id1 = await this.marketplace.userToLiveListings(accounts[0], 0);
-    const modifyListing = await this.marketplace.modifyListing(id1, "Xbox Series X", "Mint Condition", "Miami, FL", "xbox.com", 25000000, {from: accounts[0]});
-    assert.equal(id1.toString(), modifyListing.logs[0].args.listingId.toString());
+    const id = await this.marketplace.userToLiveListings(accounts[0], 0);
+    const modifyListing = await this.marketplace.modifyListing(id, "Xbox Series X", "Mint Condition", "Miami, FL", "xbox.com", 25000000, {from: accounts[0]});
+    assert.equal(id.toString(), modifyListing.logs[0].args.listingId.toString());
 
     // Ensure that listing modifications were made.
-    const liveListing = await this.marketplace.liveListings(id1);
+    const liveListing = await this.marketplace.liveListings(id);
     assert.equal(liveListing.itemName.toString(), "Xbox Series X");
     assert.equal(liveListing.itemDescription.toString(), "Mint Condition");
     assert.equal(liveListing.itemLocation.toString(), "Miami, FL");
@@ -73,7 +73,32 @@ contract('Marketplace', (accounts) => {
     assert.equal(liveListing.sellerAddress.toString(), accounts[0]);
 
     // Ensure that another account cannot modify a listing.
-    await truffleAssert.reverts(this.marketplace.modifyListing(id1, "Xbox Series X", "Mint Condition", "Miami, FL", "xbox.com", 1, {from: accounts[1]}));
-
+    await truffleAssert.reverts(this.marketplace.modifyListing(id, "Xbox Series X", "Mint Condition", "Miami, FL", "xbox.com", 1, {from: accounts[1]}));
   });
+
+  it('buyer purchases listing', async() => {
+    const id = await this.marketplace.userToLiveListings(accounts[0], 0);
+    // Ensure that attempted purchase without enough ether fails.
+    await truffleAssert.reverts(this.marketplace.buyItem(id, {from: accounts[1], value: 1}), "Buyer didnt send enough ether.");
+    // Ensure that attempted purchase with correct amount of ether works.
+    const buyListing = await this.marketplace.buyItem(id, {from: accounts[1], value: 25000000});
+    const orderId = buyListing.logs[0].args.orderId.toString();
+    assert.notEqual(orderId, id.toString());
+
+    const orderInfo = await this.marketplace.orderIdToOrder.call(orderId);
+    assert.equal(orderInfo.listingId.toString(), id);
+    assert.equal(orderInfo.sellerAddress.toString(), accounts[0]);
+    assert.equal(orderInfo.buyerAddress.toString(), accounts[1]);
+    assert.equal(orderInfo.buyerTransactionApproval, false);
+    assert.equal(orderInfo.sellerTransactionApproval, false);
+  });
+
+
+
+
+
+
+
+
+
 });

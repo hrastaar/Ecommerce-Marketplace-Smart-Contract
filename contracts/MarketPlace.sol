@@ -8,8 +8,10 @@ contract MarketPlace is Ownable {
   event BuyerSuccessfullyPurchased(uint orderId);
   event SuccessfulListingCreated(uint listingId);
   event SuccessfullyModifiedListing(uint listingId);
-
+  event OrderDataFetched(uint listingId, address buyerAddress, address sellerAddress);
+  
   enum ListingStatus { ACTIVE, PURCHASED, COMPLETED, DELETED, MODIFIED }
+
   // Object holding info for Item Listing.
   struct Listing {
     uint listingId;
@@ -91,7 +93,7 @@ contract MarketPlace is Ownable {
   mapping(address => uint) public addressToLiveListingCount;
   mapping(address => User) public addressToUser;
 
-  mapping(uint => Order) private orderIdToOrder;
+  mapping(uint => Order) public orderIdToOrder;
   mapping(address => uint[]) private addressToPurchases;
   mapping(address => uint[]) private addressToItemsSold;
 
@@ -190,9 +192,9 @@ contract MarketPlace is Ownable {
     emit BuyerSuccessfullyPurchased(orderId);
   }
 
-  function getOrderInfo(uint _orderId) public view returns (uint, address, address) {
+  function getOrderInfo(uint _orderId) public returns (uint, address, address) {
     Order memory order = orderIdToOrder[_orderId];
-    return (order.listingId, order.buyerAddress, order.sellerAddress);
+    emit OrderDataFetched(order.listingId, order.buyerAddress, order.sellerAddress);
   }
 
   /**
@@ -223,7 +225,7 @@ contract MarketPlace is Ownable {
   }
 
   function sellerApprovesTransaction(uint _orderId,
-                                     bool doesApprove) public IsOrderSeller(_orderId) returns (string memory)  {
+                                     bool doesApprove) public IsOrderSeller(_orderId)  {
     Order memory orderInfo = orderIdToOrder[_orderId];
     if (doesApprove) {
       orderInfo.sellerTransactionApproval = true;
@@ -234,7 +236,6 @@ contract MarketPlace is Ownable {
       unlockFunds(orderInfo.orderId);
       emit CompletedOrder(orderInfo.buyerAddress, msg.sender, orderInfo.orderId);
     }
-    return "";
   }
 
   // Send ether tip to contract owner.
