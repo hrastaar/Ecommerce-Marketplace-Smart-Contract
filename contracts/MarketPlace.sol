@@ -6,11 +6,12 @@ contract MarketPlace is Ownable {
   event NewListing(uint listingId);
   event CompletedOrder(address buyerAddress, address sellerAddress, uint orderId);
   event BuyerSuccessfullyPurchased(uint orderId);
+  event OrderRefunded(address buyerAddress, address sellerAddress, uint priceWei);
   event SuccessfulListingCreated(uint listingId);
   event SuccessfullyModifiedListing(uint listingId);
   event OrderDataFetched(uint listingId, address buyerAddress, address sellerAddress);
-  
-  enum ListingStatus { ACTIVE, PURCHASED, COMPLETED, DELETED, MODIFIED }
+  event ContractBalance(uint balance);
+  enum ListingStatus { ACTIVE, MODIFIED, DELETED, PURCHASED, COMPLETED }
 
   // Object holding info for Item Listing.
   struct Listing {
@@ -78,9 +79,6 @@ contract MarketPlace is Ownable {
 
   event Paid(address indexed _from, uint _value);
 
-  function () external payable {
-    emit Paid(msg.sender, msg.value);
-  }
 
   /**
   * liveListings: listingId to ListingFactory
@@ -179,10 +177,12 @@ contract MarketPlace is Ownable {
     require(listing.listingId != 0, "Cannot buy listing. ListingID invalid");
     require(msg.value >= listing.priceWei, "Buyer didnt send enough ether.");
     require(balances[msg.sender] + msg.value > balances[msg.sender], "Error adding ether value to balance");
+    balances[msg.sender] += msg.value;
 
     liveListings[_listingId].status = ListingStatus.PURCHASED;
 
     uint orderId = uint(keccak256(abi.encodePacked(listing.listingId, msg.sender, listing.sellerAddress, now)));
+    liveListings[_listingId].orderId = orderId;
 
     Order memory newOrder = Order(orderId, listing.listingId, listing.sellerAddress, msg.sender, false, false, "", "");
     addressToPurchases[msg.sender].push(orderId);
@@ -192,7 +192,7 @@ contract MarketPlace is Ownable {
     emit BuyerSuccessfullyPurchased(orderId);
   }
 
-  function getOrderInfo(uint _orderId) public returns (uint, address, address) {
+  function getOrderInfo(uint _orderId) public {
     Order memory order = orderIdToOrder[_orderId];
     emit OrderDataFetched(order.listingId, order.buyerAddress, order.sellerAddress);
   }
@@ -239,17 +239,49 @@ contract MarketPlace is Ownable {
   }
 
   // Send ether tip to contract owner.
-  function tipSmartContract() payable public {
+  function makeDeposit() public payable {
     require(balances[msg.sender] + msg.value >= balances[msg.sender], "Couldnt handle payment deposit. User balance overflowed.");
     balances[msg.sender] += msg.value;
+    emit Paid(msg.sender, msg.value);
+  }
+
+  function getContractBalance() public {
+    emit ContractBalance(address(this).balance);
   }
 
   function unlockFunds(uint orderId) private {
     Order memory orderInfo = orderIdToOrder[orderId];
     Listing memory listingInfo = liveListings[orderInfo.listingId];
     require(balances[orderInfo.buyerAddress] - listingInfo.priceWei <= balances[orderInfo.buyerAddress], "Unlock Funds failed. Couldnt remove funds from buyer address.");
+    liveListings[orderInfo.listingId].status = ListingStatus.COMPLETED;
     orderInfo.sellerAddress.transfer(listingInfo.priceWei);
-    balances[orderInfo.buyerAddress] = balances[orderInfo.buyerAddress] - listingInfo.priceWei;
+    balances[orderInfo.buyerAddress] -= listingInfo.priceWei;
+  }
+
+  function buyerCancelOrder(uint _orderId) public IsOrderBuyer(_orderId) {
+    Order memory order = orderIdToOrder[_orderId];
+    order.buyerTransactionApproval = true;
+    orderIdToOrder[_orderId] = order;
+
+    if (order.buyerTransactionApproval && order.sellerTransactionApproval) {
+      balances[order.buyerAddress] -= liveListings[order.listingId].priceWei;
+      order.buyerAddress.transfer(liveListings[order.listingId].priceWei);
+
+      emit OrderRefunded(order.buyerAddress, order.sellerAddress, liveListings[order.listingId].priceWei);
+    }
+  }
+
+  function sellerCancelOrder(uint _orderId) public IsOrderSeller(_orderId) {
+    Order memory order = orderIdToOrder[_orderId];
+    order.sellerTransactionApproval = true;
+    orderIdToOrder[_orderId] = order;
+
+    if (order.buyerTransactionApproval && order.sellerTransactionApproval) {
+      balances[order.buyerAddress] -= liveListings[order.listingId].priceWei;
+      order.buyerAddress.transfer(liveListings[order.listingId].priceWei);
+
+      emit OrderRefunded(order.buyerAddress, order.sellerAddress, liveListings[order.listingId].priceWei);
+    }
   }
 
 }

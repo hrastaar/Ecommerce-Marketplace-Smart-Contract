@@ -85,6 +85,15 @@ contract('Marketplace', (accounts) => {
     const orderId = buyListing.logs[0].args.orderId.toString();
     assert.notEqual(orderId, id.toString());
 
+    // Ensure that the user's balance was updated to have payment.
+    const buyerBalance = await this.marketplace.balances.call(accounts[1]);
+    assert.equal(buyerBalance.toNumber(), 25000000);
+
+    // Ensure that listing status updated to PURCHASED.
+    const updatedListingInfo = await this.marketplace.liveListings(id);
+    assert.equal(updatedListingInfo.status.toString(), 3);
+
+    // Gather the details of the order from the orderIdToOrder mapping.
     const orderInfo = await this.marketplace.orderIdToOrder.call(orderId);
     assert.equal(orderInfo.listingId.toString(), id);
     assert.equal(orderInfo.sellerAddress.toString(), accounts[0]);
@@ -93,12 +102,76 @@ contract('Marketplace', (accounts) => {
     assert.equal(orderInfo.sellerTransactionApproval, false);
   });
 
+  it('seller approves order, buyer doesnt, seller balance stays same', async() => {
+    const initialBuyerBalance = await this.marketplace.balances.call(accounts[1]);
+
+    const listingId = await this.marketplace.userToLiveListings(accounts[0], 0);
+    const listing = await this.marketplace.liveListings(listingId);
+
+    const sellerApprovesTransaction = await this.marketplace.sellerApprovesTransaction(listing.orderId, true, {from: accounts[0]});
+    const completedOrderEvent = await this.marketplace.buyerApprovesTransaction(listing.orderId, false, {from: accounts[1]});
+
+    const finalBuyerBalance = await this.marketplace.balances.call(accounts[1]);
+    // Ether balance shouldn't have changed (decreased) through this process.
+    assert.equal(initialBuyerBalance.toNumber(), finalBuyerBalance.toNumber());
+  });
 
 
+  it('seller gets paid from successful order', async() => {
+    const initialBuyerBalance = await this.marketplace.balances.call(accounts[1]);
 
+    const listingId = await this.marketplace.userToLiveListings(accounts[0], 0);
+    const listing = await this.marketplace.liveListings(listingId);
 
+    const sellerApprovesTransaction = await this.marketplace.sellerApprovesTransaction(listing.orderId, true, {from: accounts[0]});
+    const completedOrderEvent = await this.marketplace.buyerApprovesTransaction(listing.orderId, true, {from: accounts[1]});
 
+    // Confirm emitted event data was accurate.
+    assert.equal(completedOrderEvent.logs[0].args.buyerAddress.toString(), accounts[1]);
+    assert.equal(completedOrderEvent.logs[0].args.sellerAddress.toString(), accounts[0]);
+    assert.equal(completedOrderEvent.logs[0].args.orderId.toString(), listing.orderId);
 
+    const finalBuyerBalance = await this.marketplace.balances.call(accounts[1]);
+    // Ether should be deducted from the buyer's balance.
+    assert.notEqual(initialBuyerBalance.toNumber(), finalBuyerBalance.toNumber());
+  });
 
+  it('successful order cancellation', async() => {
+    // Buyer makes purchase
+    const prevWalletBalance = await web3.eth.getBalance(accounts[2]);
+    const listingId = await this.marketplace.userToLiveListings(accounts[0], 1);
+    const buyerPurchasesListing = await this.marketplace.buyItem(listingId, {from: accounts[2], value: 200000});
+    // Buyer tries cancel order
+    const orderId = (await this.marketplace.liveListings(listingId)).orderId;
+    await this.marketplace.buyerCancelOrder(orderId, {from: accounts[2]});
+    
+    // Ether not yet refunded
+    const walletBalance = await web3.eth.getBalance(accounts[2]);
+    assert.notEqual(walletBalance, prevWalletBalance);
+    const prevBuyerBalance = await this.marketplace.balances.call(accounts[2]);
+    assert.equal(prevBuyerBalance.toNumber(), 200000);
+
+    // Seller approves cancellation of order
+    await this.marketplace.sellerCancelOrder(orderId, {from: accounts[0]});
+    // Ether now should be refunded to buyer
+    const currBuyerBalance = await this.marketplace.balances.call(accounts[2]);
+    assert.equal(currBuyerBalance.toNumber(), 0);
+    assert.notEqual(prevBuyerBalance, currBuyerBalance);
+  });
+
+  it('tip smart contract', async() => {
+    const prevAccountBalance = await this.marketplace.balances.call(accounts[0]);
+    const beforeContractBalance = await this.marketplace.getContractBalance();
+    assert.equal(prevAccountBalance.toNumber(), 0);
+
+    await this.marketplace.makeDeposit({from: accounts[0], value: 25000000});
+
+    const currAccountBalance = await this.marketplace.balances.call(accounts[0]);
+    assert.equal(currAccountBalance.toNumber(), 25000000);
+
+    const afterContractBalance = await this.marketplace.getContractBalance();
+    assert.equal(afterContractBalance.logs[0].args.balance.toNumber(), 25000000);
+    assert.notEqual(beforeContractBalance.logs[0].args.balance.toNumber(), afterContractBalance.logs[0].args.balance.toNumber());
+  });
 
 });
